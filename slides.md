@@ -31,7 +31,7 @@ fonts:
 * What *asynchronous* can mean
 * When does React *actually* update
 * Concurrent mode
-* External state & tearing
+  * External state & tearing
 
 ---
 
