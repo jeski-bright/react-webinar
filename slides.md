@@ -11,7 +11,7 @@ info: |
 drawings:
   persist: false
 css: unocss
-title: Welcome to Slidev
+title: React State
 colorSchema: dark
 fonts:
   sans: "Lato"
@@ -24,11 +24,14 @@ fonts:
 
 # Agenda:
 
-* state hooks
+* State hooks
   * useState
   * useReducer
-* what *asynchronous* can mean
-* when does React *actually* update
+* Why keep state in React
+* What *asynchronous* can mean
+* When does React *actually* update
+* Concurrent mode
+* External state & tearing
 
 ---
 
@@ -188,316 +191,472 @@ export const useState = <T>(initialState?: State | (() => State)) =>
 ```
 ---
 
-# Navigation
+# Why keep state in React?
 
-Hover on the bottom-left corner to see the navigation's controls panel, [learn more](https://sli.dev/guide/navigation.html)
+<v-clicks>
 
-### Keyboard Shortcuts
-
-|                                                    |                             |
-| -------------------------------------------------- | --------------------------- |
-| <kbd>right</kbd> / <kbd>space</kbd>                | next animation or slide     |
-| <kbd>left</kbd> / <kbd>shift</kbd><kbd>space</kbd> | previous animation or slide |
-| <kbd>up</kbd>                                      | previous slide              |
-| <kbd>down</kbd>                                    | next slide                  |
-
-<!-- https://sli.dev/guide/animations.html#click-animations -->
-
-<img
-  v-click
-  class="absolute -bottom-9 -left-7 w-80 opacity-50"
-  src="https://sli.dev/assets/arrow-bottom-left.svg"
-/>
-
-<p v-after class="absolute bottom-23 left-45 opacity-30 transform -rotate-10">Here!</p>
+* It's the only way of telling React to re-render
+  * Class components used to have a `forceUpdate` method
+  * It can be simulated in stateless components... by using state
+* It allows for *concurrent mode* patterns
+* It helps performance
+  * React only re-renders the subtree affected
+  * React automatically batches updates
+  * State updates are *asynchronous*
+</v-clicks>
 
 ---
-layout: image-right
-image: https://source.unsplash.com/collection/94734566/1920x1080
+layout: iframe-right
+url: https://stackblitz.com/edit/react-ts-cgjyuw?devToolsHeight=80&embed=1&file=App.tsx&hideExplorer=1&view=preview
 ---
 
-# Code
+# State updates are *asynchronous*
 
-Use code snippets and get the highlighting directly![^1]
-
-```ts {all|2|1-6|9|all}
-interface User {
-  id: number;
-  firstName: string;
-  lastName: string;
-  role: string;
-}
-
-function updateUser(id: number, update: User) {
-  const user = getUser(id);
-  const newUser = { ...user, ...update };
-  saveUser(id, newUser);
+```tsx{all|2,3,5,7,8,10,14-17|4,6,9,11|all}
+const Counter = () => {
+  const [state, setState] = React.useState(0);
+  const increment = () => {
+    console.log('before increment');
+    setState((current) => {
+      console.log('increment');
+      return current + 1;
+    });
+    console.log('after increment');
+  };
+  console.log('render');
+  return (
+    <div>
+      <p>{state}</p>
+      <button onClick={increment}>
+        Increment
+      </button>
+    </div>
+  );
 }
 ```
 
-<arrow v-click="3" x1="400" y1="420" x2="230" y2="330" color="#564" width="3" arrowSize="1" />
+---
 
-[^1]: [Learn More](https://sli.dev/guide/syntax.html#line-highlighting)
+# What *asynchronous* can mean
 
-<style>
-.footnotes-sep {
-  @apply mt-20 opacity-10;
+The browser environment gives us multiple choices when to run our asynchronous code:
+
+<v-clicks>
+
+* microtasks
+  * Run *immediately* after the call stack is empty
+  * Can be created using `queueMicrotask` or `Promise.resolve`
+* tasks
+  * Run sometime in the future, when the event loop gets to it
+  * Can be created using `setTimeout`, `MessageChannel` ports, event callbacks
+* `requestAnimationFrame`
+  * Runs *before* the next paint
+</v-clicks>
+
+---
+
+# Which mechanism React usues?
+Let's find out!
+<v-click>
+
+```ts{1-8|10-11|12-13|14-15}
+const asyncLog = (
+  message: string,
+  queueMechanism: (cb: () => void) => void
+) => {
+  queueMechanism(() => {
+    console.log(message);
+  });
+};
+
+const logMicrotask = (message: string) => 
+  asyncLog(message, queueMicrotask);
+const logTimeout = (message: string) =>
+  asyncLog(message, (cb) => setTimeout(cb, 0));
+const logAnimationFrame = (message: string) =>
+  asyncLog(message, requestAnimationFrame);
+```
+</v-click>
+
+---
+layout: iframe-right
+url: https://stackblitz.com/edit/react-ts-bhgwtf?devToolsHeight=80&embed=1&file=App.tsx&hideExplorer=1&view=preview
+---
+
+For event callbacks, React uses *microtasks*
+
+```tsx{all|6-10|all}
+const Counter = () => {
+  const [state, setState] = useState(0);
+  const increment = () => 
+    setState((current) => current + 1);
+
+  const handler = () => {
+    logMicrotask('before increment')
+    increment()
+    logMicrotask('after increment')
+  };
+
+  console.log('render');
+  return (
+    <div>
+      <p>{state}</p>
+      <button onClick={handler}>
+        Increment
+      </button>
+    </div>
+  );
 }
-.footnotes {
-  @apply text-sm opacity-75;
+```
+
+---
+layout: iframe-right
+url: https://stackblitz.com/edit/react-ts-b9nz6d?devToolsHeight=80&embed=1&file=App.tsx&hideExplorer=1&view=preview
+---
+
+It doesn't matter how the callback was registered
+
+```tsx{all|10-17,22|all}
+const Counter = () => {
+  const [state, setState] = useState(0);
+  const increment = () => 
+    setState((current) => current + 1);
+  const handler = () => {
+    logMicrotask('before increment');
+    increment();
+    logMicrotask('after increment');
+  };
+  const buttonRef = React.useRef(null);
+  useEffect(() => {
+    const btn = buttonRef.current;
+    btn.addEventListener('click', handler);
+    return () => 
+      btn.removeEventListener('click', handler);
+  });
+
+  console.log('render');
+  return (
+    <div>
+      <p>{state}</p>
+      <button ref={buttonRef}>Increment</button>
+    </div>
+  );
 }
-.footnote-backref {
-  display: none;
+```
+
+---
+layout: iframe-right
+url: https://stackblitz.com/edit/react-ts-a3sacf?devToolsHeight=80&embed=1&file=App.tsx&hideExplorer=1&view=preview
+---
+
+But it does matter when it was triggered
+
+```tsx{all|16-21|all}
+const Counter = () => {
+  const [state, setState] = React.useState(0);
+  const increment = () => 
+    setState((current) => current + 1);
+
+  const handler = () => {
+    logMicrotask('before increment');
+    increment();
+    logMicrotask('after increment');
+  };
+
+  console.log('render');
+  return (
+    <div>
+      <p>{state}</p>
+      <button 
+        onClick={() => setTimeout(handler,0)}
+      >
+        Increment
+      </button>
+    </div>
+  );
 }
-</style>
-
----
-
-# Components
-
-<div grid="~ cols-2 gap-4">
-<div>
-
-You can use Vue components directly inside your slides.
-
-We have provided a few built-in components like `<Tweet/>` and `<Youtube/>` that you can use directly. And adding your custom components is also super easy.
-
-```html
-<Counter :count="10" />
 ```
 
-<!-- ./components/Counter.vue -->
-<Counter :count="10" m="t-4" />
 
-Check out [the guides](https://sli.dev/builtin/components.html) for more.
+---
+layout: iframe-right
+url: https://stackblitz.com/edit/react-ts-hs14sc?devToolsHeight=80&embed=1&file=App.tsx&hideExplorer=1&view=preview
+---
 
-</div>
-<div>
+In which case React will use a timeout
 
-```html
-<Tweet id="1390115482657726468" />
+```tsx{all|7,9|all}
+const Counter = () => {
+  const [state, setState] = React.useState(0);
+  const increment = () => 
+    setState((current) => current + 1);
+
+  const handler = () => {
+    logTimeout('before increment');
+    increment();
+    logTimeout('after increment');
+  };
+
+  console.log('render');
+  return (
+    <div>
+      <p>{state}</p>
+      <button 
+        onClick={() => setTimeout(handler,0)}
+      >
+        Increment
+      </button>
+    </div>
+  );
+}
 ```
 
-<Tweet id="1390115482657726468" scale="0.65" />
+---
 
-</div>
-</div>
+# React state update timing
+<v-clicks>
 
-<!--
-Presenter note with **bold**, *italic*, and ~~striked~~ text.
+* For *event handlers*, React will use *microtasks*
+  * This ensures that all listeners for this event get triggered before the next render
+* For other callbacks, React will schedule a *task*
+  * This ensures that all pending tasks are handled before the next render
+</v-clicks>
 
-Also, HTML elements are valid:
-<div class="flex w-full">
-  <span style="flex-grow: 1;">Left content</span>
-  <span>Right content</span>
-</div>
--->
+<v-click>
+
+This also means, that this function will trigger 1 or 2 re-renders, depending on where it was called
+```ts
+const handleIncrement = async () => {
+  await increment()
+  await increment()
+}
+``` 
+</v-click>
+<v-click>
+
+There is also an escape hatch. You can use `flushSync` from `react-dom` to *synchronously* update state
+</v-click>
 
 ---
 
-## class: px-20
+# When to `flushSync`?
 
-# Themes
+<v-clicks>
 
-Slidev comes with powerful theming support. Themes can provide styles, layouts, components, or even configurations for tools. Switching between themes by just **one edit** in your frontmatter:
+* If you need to call an imperative API after updating the state
+  ```ts
+  const [items, setItems] = useState([])
+  ...
+  const handleAdd = (newItem) => {
+    flushSync(() => {
+      setItems(current => [...current, newItem])
+    })
+    // these lines run after render
+    const element = getElementForItem(item)
+    element.scrollIntoView()
+  }
+  ```
+* If you need to integrate with a 3rd party library that exposes an imperative API
+* Overall, should be used with care and not overused, as it opts-out of batching.
 
-<div grid="~ cols-2 gap-2" m="-t-2">
+</v-clicks>
 
-```yaml
 ---
-theme: default
+
+# Concurrent mode
+
+Concurrent mode allows the developer to mark some state updates as non-critical. These changes will be applied in a "forked" state tree, which will be "merged" back, when the background render is finished. React calls the fork a `transition` and provides the following tools:
+<v-clicks>
+
+* `startTransition` - useful to trigger a transition from any place, not necessarily a component.
+  * Accepts a single argument, a callback which should call `setState`s to be processed in the background 
+* `useTransition` - useful to additinally know if we are transitioning
+  * accepts no arguments, returns a `[isPending, startTransition]` tuple
+* `useDeferredValue` - accepts a single argument and returns a value of the same type
+  * the returned value is equal to the argument in the "fork"
+  * it may be different in the "main" tree
+  * it is a declarative version of `useTransition`
+</v-clicks>
+<v-click>
+
+Updates wrapped in a transition never trigger a suspense. The transition will be suspended instead, hence this is a way of avoiding fallback content.
+</v-click>
+
+
 ---
+
+# React state update, visualized 
+
+<v-click>
+
+* Regular update flow
+```mermaid {scale: 0.8}
+gitGraph
+   commit id:"Initial render" tag:"render"
+   commit id:"Commit changes" tag:"commit"
+   commit id:"click"
+   branch batch
+   checkout batch
+   commit id:"setState 1"
+   commit id:"setState 2"
+   checkout main
+   merge batch tag:"render"
+   commit id:"Commit changes 2" tag:"commit"
+  
+```
+</v-click>
+<v-click>
+
+* Concurrent update flow
+```mermaid {scale: 0.8}
+gitGraph
+   commit id:"Initial render" tag:"render"
+   commit id:"Commit changes" tag:"commit"
+   commit id:"click(start transition)"
+   branch transition
+   checkout transition
+   branch batch
+   checkout batch
+   commit id:"setState 1"
+   commit id:"setState 2"
+   checkout transition
+   merge batch tag:"start"
+   commit id:" " tag:"render"
+   commit id:"  " tag:"finish"
+   checkout main
+   merge transition tag:"commit"
+  
+```
+</v-click>
+
+---
+
+# State updates in concurrent mode
+
+```mermaid {scale: 0.8}
+gitGraph
+   commit id:"click(start transition)"
+   branch transition order:2
+   checkout transition
+   branch batch order:3
+   checkout batch
+   commit id:"setState 1"
+   commit id:"setState 2"
+   checkout transition
+   merge batch tag:"start"
+   checkout main
+   commit id:"click()"
+   branch batch2 order:1
+   checkout batch2
+   commit id:"setState 3"
+   commit id:"setState 4"
+   checkout main
+   merge batch2 tag:"render"
+   commit id:"   " tag:"commit"
+   checkout transition
+   merge batch2 tag: "start over"
+   commit id:" " tag:"render"
+   commit id:"  " tag:"finish"
+   checkout main
+   merge transition tag:"commit"
+  
 ```
 
-```yaml
+<v-click>
+
+The above graph holds, as long as React *knows* about the state updates.
+</v-click>
+
 ---
-theme: seriph
----
+
+# Synchronising *external* state
+
+<v-show>
+
+Sometimes our state grows and we want to use better tooling to manage it. Or we need to use it also outside of React. How to keep our tree in sync?
+</v-show>
+
+<v-click>
+
+This is how we used to do it. But it causes a very subtle bug in concurrent mode.
+```ts
+import store from './store'
+
+export const useStore = () => {
+  const [state, setState] = useState(store.getState());
+
+  useEffect(() => {
+    const handleStoreUpdate = () => setState(store.getState());
+    const unsubscribe = store.subscribe(handleStoreUpdate);
+
+    return unsubscribe
+  }, []);
+
+  return state;
+}
 ```
-
-<img border="rounded" src="https://github.com/slidevjs/themes/blob/main/screenshots/theme-default/01.png?raw=true">
-
-<img border="rounded" src="https://github.com/slidevjs/themes/blob/main/screenshots/theme-seriph/01.png?raw=true">
-
-</div>
-
-Read more about [How to use a theme](https://sli.dev/themes/use.html) and
-check out the [Awesome Themes Gallery](https://sli.dev/themes/gallery.html).
+</v-click>
 
 ---
+layout: iframe-right
+url: https://stackblitz.com/edit/react-ts-1aq1hn?embed=1&file=SlowComponent.tsx&view=preview
+---
 
-## preload: false
+# Tearing
 
-# Animations
-
-Animations are powered by [@vueuse/motion](https://motion.vueuse.org/).
-
-```html
-<div v-motion :initial="{ x: -80 }" :enter="{ x: 0 }">Slidev</div>
-```
-
-<div class="w-60 relative mt-6">
-  <div class="relative w-40 h-40">
-    <img
-      v-motion
-      :initial="{ x: 800, y: -100, scale: 1.5, rotate: -50 }"
-      :enter="final"
-      class="absolute top-0 left-0 right-0 bottom-0"
-      src="https://sli.dev/logo-square.png"
-    />
-    <img
-      v-motion
-      :initial="{ y: 500, x: -100, scale: 2 }"
-      :enter="final"
-      class="absolute top-0 left-0 right-0 bottom-0"
-      src="https://sli.dev/logo-circle.png"
-    />
-    <img
-      v-motion
-      :initial="{ x: 600, y: 400, scale: 2, rotate: 100 }"
-      :enter="final"
-      class="absolute top-0 left-0 right-0 bottom-0"
-      src="https://sli.dev/logo-triangle.png"
-    />
+```tsx{all|1,5-9,12,16-24|2-4,12|all}
+const [show, setShow] = React.useState(false);
+const updateStore = () => {
+  update(Date.now());
+};
+const handleClick = () => {
+  startTransition(() => {
+    setShow((current) => !current);
+  });
+};
+return (
+  <div>
+    <button onClick={handleClick}>Toggle!</button>
+    <button onClick={updateStore}>
+      Update state
+    </button>
+    {show && (
+      <div>
+        <SlowComponent />
+        <SlowComponent />
+        <SlowComponent />
+        <SlowComponent />
+        <SlowComponent />
+      </div>
+    )}
   </div>
-
-  <div
-    class="text-5xl absolute top-14 left-40 text-[#2B90B6] -z-1"
-    v-motion
-    :initial="{ x: -80, opacity: 0}"
-    :enter="{ x: 0, opacity: 1, transition: { delay: 2000, duration: 1000 } }">
-    Slidev
-  </div>
-</div>
-
-<!-- vue script setup scripts can be directly used in markdown, and will only affects current page -->
-<script setup lang="ts">
-const final = {
-  x: 0,
-  y: 0,
-  rotate: 0,
-  scale: 1,
-  transition: {
-    type: 'spring',
-    damping: 10,
-    stiffness: 20,
-    mass: 2
-  }
-}
-</script>
-
-<div
-  v-motion
-  :initial="{ x:35, y: 40, opacity: 0}"
-  :enter="{ y: 0, opacity: 1, transition: { delay: 3500 } }">
-
-[Learn More](https://sli.dev/guide/animations.html#motion)
-
-</div>
-
----
-
-# LaTeX
-
-LaTeX is supported out-of-box powered by [KaTeX](https://katex.org/).
-
-<br>
-
-Inline $\sqrt{3x-1}+(1+x)^2$
-
-Block
-
-$$
-\begin{array}{c}
-
-\nabla \times \vec{\mathbf{B}} -\, \frac1c\, \frac{\partial\vec{\mathbf{E}}}{\partial t} &
-= \frac{4\pi}{c}\vec{\mathbf{j}}    \nabla \cdot \vec{\mathbf{E}} & = 4 \pi \rho \\
-
-\nabla \times \vec{\mathbf{E}}\, +\, \frac1c\, \frac{\partial\vec{\mathbf{B}}}{\partial t} & = \vec{\mathbf{0}} \\
-
-\nabla \cdot \vec{\mathbf{B}} & = 0
-
-\end{array}
-$$
-
-<br>
-
-[Learn more](https://sli.dev/guide/syntax#latex)
-
----
-
-# Diagrams
-
-You can create diagrams / graphs from textual descriptions, directly in your Markdown.
-
-<div class="grid grid-cols-3 gap-10 pt-4 -mb-6">
-
-```mermaid {scale: 0.5}
-sequenceDiagram
-    Alice->John: Hello John, how are you?
-    Note over Alice,John: A typical interaction
+);
 ```
 
-```mermaid {theme: 'neutral', scale: 0.8}
-graph TD
-B[Text] --> C{Decision}
-C -->|One| D[Result 1]
-C -->|Two| E[Result 2]
-```
+---
+layout: iframe-right
+url: https://stackblitz.com/edit/react-ts-6uaips?embed=1&file=useStore.tsx&view=preview
+---
+# Tearing, fixed
 
-```plantuml {scale: 0.7}
-@startuml
+<v-show>
 
-package "Some Group" {
-  HTTP - [First Component]
-  [Another Component]
-}
+`useSyncExternalStore` is a hook which should be used to synchronise external state with React.
+</v-show>
+<v-clicks>
 
-node "Other Groups" {
-  FTP - [Second Component]
-  [First Component] --> FTP
-}
-
-cloud {
-  [Example 1]
-}
-
-
-database "MySql" {
-  folder "This is my folder" {
-    [Folder 3]
-  }
-  frame "Foo" {
-    [Frame 4]
-  }
-}
-
-
-[Another Component] --> [Example 1]
-[Example 1] --> [Folder 3]
-[Folder 3] --> [Frame 4]
-
-@enduml
-```
-
-</div>
-
-[Learn More](https://sli.dev/guide/syntax.html#diagrams)
+* It accepts three arguments:
+  * `subscribe` - it takes a single `callback` which subscribes to the store and returns an `unsubscribe` method
+  * `getSnapshot` - it returns the store's current state
+  * (optional) `getServerSnapshot` - used for SSR & initial hydration
+* It returns the *current* state of the store
+* It ensures that it is *always* in sync with the store
+</v-clicks>
 
 ---
 
-src: ./pages/multiple-entries.md
-hide: false
+# Sources
 
----
-
----
-
-layout: center
-class: text-center
-
----
-
-# Learn More
-
-[Documentations](https://sli.dev) · [GitHub](https://github.com/slidevjs/slidev) · [Showcases](https://sli.dev/showcases.html)
+1. React docs (https://beta.reactjs.org/)
+2. In the loop (https://youtu.be/cCOL7MC4Pl0/)
+3. React concurrency discussion (https://github.com/reactwg/react-18/discussions/70)
