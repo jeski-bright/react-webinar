@@ -24,14 +24,30 @@ fonts:
 
 # Agenda:
 
+* Why keep state in React
 * State hooks
   * useState
   * useReducer
-* Why keep state in React
 * What *asynchronous* can mean
 * When does React *actually* update
 * Concurrent mode
   * External state & tearing
+
+---
+
+# Why keep state in React?
+
+<v-clicks>
+
+* It's the only way of telling React to re-render
+  * Class components used to have a `forceUpdate` method
+  * It can be simulated in stateless components... by using state
+* It allows for *concurrent mode* patterns
+* It helps performance
+  * React only re-renders the subtree affected
+  * React automatically batches updates
+  * State updates are *asynchronous*
+</v-clicks>
 
 ---
 
@@ -180,7 +196,7 @@ const reducer = <State>(prevState: State, action: SetStateAction<State>): State 
   }
 }
 
-export const useState = <T>(initialState?: State | (() => State)) => 
+export const useState = <State>(initialState?: State | (() => State)) => 
   useReducer(
     reducer,
     undefined,
@@ -189,21 +205,6 @@ export const useState = <T>(initialState?: State | (() => State)) =>
 
 
 ```
----
-
-# Why keep state in React?
-
-<v-clicks>
-
-* It's the only way of telling React to re-render
-  * Class components used to have a `forceUpdate` method
-  * It can be simulated in stateless components... by using state
-* It allows for *concurrent mode* patterns
-* It helps performance
-  * React only re-renders the subtree affected
-  * React automatically batches updates
-  * State updates are *asynchronous*
-</v-clicks>
 
 ---
 layout: iframe-right
@@ -214,7 +215,7 @@ url: https://stackblitz.com/edit/react-ts-cgjyuw?devToolsHeight=80&embed=1&file=
 
 ```tsx{all|2,3,5,7,8,10,14-17|4,6,9,11|all}
 const Counter = () => {
-  const [state, setState] = React.useState(0);
+  const [state, setState] = useState(0);
   const increment = () => {
     console.log('before increment');
     setState((current) => {
@@ -245,7 +246,7 @@ The browser environment gives us multiple choices when to run our asynchronous c
 
 * microtasks
   * Run *immediately* after the call stack is empty
-  * Can be created using `queueMicrotask` or `Promise.resolve`
+  * Can be created using `queueMicrotask` or `Promise.resolve().then`
 * tasks
   * Run sometime in the future, when the event loop gets to it
   * Can be created using `setTimeout`, `MessageChannel` ports, event callbacks
@@ -255,7 +256,7 @@ The browser environment gives us multiple choices when to run our asynchronous c
 
 ---
 
-# Which mechanism React usues?
+# Which mechanism does React use?
 Let's find out!
 <v-click>
 
@@ -326,7 +327,7 @@ const Counter = () => {
     increment();
     logMicrotask('after increment');
   };
-  const buttonRef = React.useRef(null);
+  const buttonRef = useRef(null);
   useEffect(() => {
     const btn = buttonRef.current;
     btn.addEventListener('click', handler);
@@ -353,7 +354,7 @@ But it does matter when it was triggered
 
 ```tsx{all|16-21|all}
 const Counter = () => {
-  const [state, setState] = React.useState(0);
+  const [state, setState] = useState(0);
   const increment = () => 
     setState((current) => current + 1);
 
@@ -387,7 +388,7 @@ In which case React will use a timeout
 
 ```tsx{all|7,9|all}
 const Counter = () => {
-  const [state, setState] = React.useState(0);
+  const [state, setState] = useState(0);
   const increment = () => 
     setState((current) => current + 1);
 
@@ -452,7 +453,7 @@ There is also an escape hatch. You can use `flushSync` from `react-dom` to *sync
       setItems(current => [...current, newItem])
     })
     // these lines run after render
-    const element = getElementForItem(item)
+    const element = getElementForItem(newItem)
     element.scrollIntoView()
   }
   ```
@@ -605,7 +606,7 @@ url: https://stackblitz.com/edit/react-ts-1aq1hn?embed=1&file=SlowComponent.tsx&
 # Tearing
 
 ```tsx{all|1,5-9,12,16-24|2-4,12|all}
-const [show, setShow] = React.useState(false);
+const [show, setShow] = useState(false);
 const updateStore = () => {
   update(Date.now());
 };
