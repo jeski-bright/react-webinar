@@ -116,6 +116,8 @@ const Component = () => {
 - if the next state is derived from the previous one, prefer the latter form
 
 - if you want to store a function you *must* use the latter form
+
+- state is only updated if the new one is *different* (Using `Object.is` to compare)
 </v-clicks>
 
 --- 
@@ -284,9 +286,9 @@ layout: iframe-right
 url: https://stackblitz.com/edit/react-ts-bhgwtf?devToolsHeight=80&embed=1&file=App.tsx&hideExplorer=1&view=preview
 ---
 
-For event callbacks, React uses *microtasks*
+For *most* event callbacks, React uses *microtasks*
 
-```tsx{all|6-10|all}
+```tsx{all|3-4|6-10,16-18|all}
 const Counter = () => {
   const [state, setState] = useState(0);
   const increment = () => 
@@ -413,19 +415,52 @@ const Counter = () => {
 ```
 
 ---
+layout: iframe-right
+url: https://stackblitz.com/edit/react-ts-a8wuur?devToolsHeight=80&embed=1&file=App.tsx&hideExplorer=1&view=preview
+---
+
+It will also use the timeout for *some* events
+
+```tsx{all|17|all}
+const Counter = () => {
+  const [state, setState] = useState(0);
+  const increment = () => 
+    setState((current) => current + 1);
+
+  const handler = () => {
+    logTimeout('before increment');
+    increment();
+    logTimeout('after increment');
+  };
+
+  console.log('render');
+  return (
+    <div>
+      <p>{state}</p>
+      <button 
+        onMouseEnter={handler}
+      >
+        Increment
+      </button>
+    </div>
+  );
+}
+```
+
+---
 
 # React state update timing
 <v-clicks>
 
-* For *event handlers*, React will use *microtasks*
+* For *most event handlers*, React will use *microtasks*
   * This ensures that all listeners for this event get triggered before the next render
-* For other callbacks, React will schedule a *task*
+* For other callbacks and *some event handlers*, React will schedule a *task*
   * This ensures that all pending tasks are handled before the next render
 </v-clicks>
 
 <v-click>
 
-This also means, that this function will trigger 1 or 2 re-renders, depending on where it was called
+This also means, that this function will trigger 1 or 2 re-renders, depending on how it was called
 ```ts
 const handleIncrement = async () => {
   await increment()
@@ -459,8 +494,91 @@ There is also an escape hatch. You can use `flushSync` from `react-dom` to *sync
   ```
 * If you need to integrate with a 3rd party library that exposes an imperative API
 * Overall, should be used with care and not overused, as it opts-out of batching.
+* `flushSync` may flush updates outside the callback when necessary to flush the updates inside the callback
 
 </v-clicks>
+
+---
+
+# There is another
+
+<img class="p-4 mx-auto my-auto h-inherit" src="/images/yoda.jpeg" >
+
+---
+
+# Calling `setState` during a *render*
+
+<v-clicks>
+
+* Should be avoided,
+* For derived state, you should use `useMemo` instead, 
+* Is only possible for the current component\'s state,
+* In the rare cases where you actually need this, it is better than setting state in `useEffect`
+
+</v-clicks>
+
+<v-click>
+<div style="display: flex; gap: 24px; width: 100%">
+
+<div style="flex-grow: 1">
+
+```ts
+const [state, setState] = useState(initial);
+if(shouldUpdateState(deps)) {
+  setState(newState)
+}
+```
+</div>
+
+<div style="flex-grow: 1">
+
+```ts
+const [state, setState] = useState(initial);
+useEffect(() => {
+  if(shouldUpdateState(deps)) {
+    setState(newState)
+  }
+}, [deps])
+```
+</div>
+</div>
+
+</v-click>
+
+---
+layout: iframe-right
+url: https://stackblitz.com/edit/react-ts-mjtmxl?devToolsHeight=80&embed=1&file=App.tsx&hideExplorer=1&view=preview
+
+---
+
+Preventing unnecessary re-renders
+
+```tsx{all|1-5|10-13|all}
+const Counter = ({ count }) => {
+  console.log('counter render', count);
+
+  return <p>{count}</p>;
+};
+
+const App() {
+  const [count, setCount] = useState(0);
+  const increment = () => setCount((c) => c + 1);
+
+  if(count % 2 === 1) {
+    increment()
+  }
+
+  console.log('app render', count);
+  return (
+    <div>
+      <Counter count={count} />
+      <button onClick={increment}>
+        Increment
+      </button>
+    </div>
+  );
+}
+```
 
 ---
 
@@ -490,8 +608,8 @@ Updates wrapped in a transition never trigger a suspense. The transition will be
 
 <v-click>
 
-* Regular update flow
-```mermaid {scale: 0.8}
+Regular update flow
+```mermaid {scale: 1.4}
 gitGraph
    commit id:"Initial render" tag:"render"
    commit id:"Commit changes" tag:"commit"
@@ -506,10 +624,14 @@ gitGraph
   
 ```
 </v-click>
-<v-click>
 
-* Concurrent update flow
-```mermaid {scale: 0.8}
+---
+
+# React state update, visualized 
+
+
+Concurrent update flow
+```mermaid {scale: 1.4}
 gitGraph
    commit id:"Initial render" tag:"render"
    commit id:"Commit changes" tag:"commit"
@@ -528,13 +650,12 @@ gitGraph
    merge transition tag:"commit"
   
 ```
-</v-click>
 
 ---
 
 # State updates in concurrent mode
 
-```mermaid {scale: 0.8}
+```mermaid {scale: 1}
 gitGraph
    commit id:"click(start transition)"
    branch transition order:2
@@ -605,7 +726,7 @@ url: https://stackblitz.com/edit/react-ts-1aq1hn?embed=1&file=SlowComponent.tsx&
 
 # Tearing
 
-```tsx{all|1,5-9,12,16-24|2-4,12|all}
+```tsx{all|1,5-9,12,16-24|2-4,13-15|all}
 const [show, setShow] = useState(false);
 const updateStore = () => {
   update(Date.now());
